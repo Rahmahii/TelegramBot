@@ -1,0 +1,176 @@
+const { Telegraf } = require('telegraf')
+const axios = require("axios");
+var Jimp = require("jimp");
+var fs = require('fs')
+var QrCode = require('qrcode-reader');
+const path = require('path');
+const request = require('request');
+const express = require('express');
+const app = express();
+TOKEN = '5494797037:AAGCTca1rnbqNXD4p-K8PYSegOjrUgFoj4k'
+const bot = new Telegraf(TOKEN)
+const say = require('say')
+const KSA_number = /^(009665|9665|\+9665|05|5)(5|0|3|6|4|9|1|8|7)([0-9]{7})$/;
+let step, phone, SMScode, buffer = 0
+
+
+
+bot.action('Wallet', (ctx) => {  // this is a handler for a specific text, in this case it is "pay"
+    bot.telegram.sendMessage(ctx.chat.id, 'Choose top-up amount', {
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: '35 SAR with 10 SAR Bonus', callback_data: '35' }],
+                [{ text: '80 SAR with 40 SAR Bonus', callback_data: '80' }],
+                [{ text: '120 SAR with 80 SAR Bonus', callback_data: '120' }]
+            ]
+        }
+    })
+    bot.action('35', (ctx) => { ctx.replyWithInvoice(getInvoice(35, ctx.from.id)); ctx.answerCbQuery() })
+    bot.action('80', (ctx) => { ctx.replyWithInvoice(getInvoice(80, ctx.from.id)); ctx.answerCbQuery() })
+    bot.action('120', (ctx) => { ctx.replyWithInvoice(getInvoice(120, ctx.from.id)); ctx.answerCbQuery() })
+    ctx.answerCbQuery()
+})
+
+
+bot.on('message', async (ctx) => {
+    if (ctx.message.text == '/start') {
+        step = 1
+        bot.telegram.sendMessage(ctx.chat.id, 'Welcome to you in Spiders mobility', {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: 'Wallet Recharge', callback_data: 'Wallet' },
+                    { text: 'Start ride', callback_data: 'Start ride' },
+                    { text: 'Stop ride', callback_data: 'Stop ride' }
+                    ]
+                ]
+            }
+        })
+    }
+    bot.action('Start ride', ctxR => {
+        step = 2
+        bot.telegram.sendMessage(ctxR.chat.id, 'Enter your mobile phone')
+        ctxR.answerCbQuery()
+    })
+    if (step == 2) {
+        if (KSA_number.test(ctx.message.text)) {
+            phone = ctx.message.text
+            bot.telegram.sendMessage(ctx.chat.id, 'Enter the code sent via SMS to' + ctx.message.text)
+            step = 3
+        } else if (!KSA_number.test(ctx.message.text)) {
+            bot.telegram.sendMessage(ctx.chat.id, 'Wrong phone number!!!')
+        }
+    }
+    if (step == 3) {
+        if (ctx.message.text == "000") {
+            SMScode = 000
+            bot.telegram.sendMessage(ctx.chat.id, 'Welcome to you ' + ctx.chat.first_name + "\nplease scan the barcode of the scooter")
+            step = 4
+        } else if (ctx.message.text !== "000" && ctx.message.text !== phone) {
+            bot.telegram.sendMessage(ctx.chat.id, 'Wrong code!!!')
+        }
+    }
+    if (step == 4) {
+        if (ctx.message.photo) {
+            let fileId = ctx.message.photo[0].file_id
+            const image = await bot.telegram.getFileLink(fileId);
+            let downloadURL = image.href
+            download(downloadURL, path.join(__dirname + '\\Photo', `${fileId}.jpg`), () => {
+                console.log("done!!")
+                ReadQR(__dirname + '\\Photo\\' + `${fileId}.jpg`)
+                bot.telegram.sendMessage(ctx.chat.id, 'You start the ride')
+            })
+        } else if (ctx.message.photo === 'undefined' && ctx.message.text !== SMScode) {
+            bot.telegram.sendMessage(ctx.chat.id, 'It is not image .. please scan the barcode of the scooter')
+        }
+
+    }
+    bot.action('Stop ride', ctx => {
+        ctx.answerCbQuery()
+        bot.telegram.sendMessage(ctx.chat.id, 'dddd')
+    })
+
+})
+
+
+const download = (url, path, callback) => {
+    request.head(url, (err, res, body) => {
+        request(url).pipe(fs.createWriteStream(path)).on('close', callback);
+    });
+};
+function ReadQR(imagePath) {
+    buffer = fs.readFileSync(imagePath)
+    // Parse the image using Jimp.read() method
+    Jimp.read(buffer, function (err, image) {
+        if (err) {
+            console.error(err);
+        }
+        // Creating an instance of qrcode-reader module
+        let qrcode = new QrCode();
+        qrcode.callback = function (err, value) {
+            if (err) {
+                console.error(err);
+            }
+            // Printing the decrypted value
+            console.log(value.result);
+        };
+        // Decoding the QR code
+        qrcode.decode(image.bitmap);
+    });
+}
+
+const getInvoice = (price, id) => {
+    const invoice = {
+        chat_id: id, // Unique identifier of the target chat or username of the target channel
+        provider_token: '1877036958:TEST:0f9aac5c70d5685cfb50ebdf2e9a888204f31d98', // token issued via bot @SberbankPaymentBot
+        start_parameter: '', // Unique parameter for deep links. If you leave this field blank, forwarded copies of the forwarded message will have a Pay button that allows multiple users to pay directly from the forwarded message using the same account. If not empty, redirected copies of the sent message will have a URL button with a deep link to the bot (instead of a payment button) with a value used as an initial parameter.
+        title: 'Add balance to my wallet', // Product name, 1-32 characters
+        description: 'Invoice at ' + new Date(), // Product description, 1-255 characters
+        currency: 'SAR', // ISO 4217 Three-Letter Currency Code
+        prices: [{ label: 'My wallet amount', amount: price * 100 }], // Price breakdown, serialized list of components in JSON format 100 kopecks * 100 = 100 rubles
+        payload: { // The payload of the invoice, as determined by the bot, 1-128 bytes. This will not be visible to the user, use it for your internal processes.
+            unique_id: `${id}_${Number(new Date())}`,
+            provider_token: '1877036958:TEST:0f9aac5c70d5685cfb50ebdf2e9a888204f31d98'
+        }
+    }
+    return invoice
+}
+
+
+
+
+
+
+// bot.on('text',(ctx)=>{
+//     //console.log(ctx)
+
+//     if(ctx.message.text=='/start'){
+//     bot.telegram.sendMessage(ctx.chat.id,'Welcome to you in Spiders mobility',{
+//         reply_markup:{
+//             inline_keyboard:[
+//                 [
+//                     {text:'Start ride',callback_data:'Start ride'},
+//                     {text:'Stop ride',callback_data:'Stop ride'}
+//                 ]
+//             ]}
+//         })}
+
+// })
+
+// bot.action('Start ride',ctx=>{
+//     console.log(ctx.Context)
+//     ctx.answerCbQuery()  
+//     bot.telegram.sendMessage(ctx.chat.id,'Enter your mobile phone')
+//    if(KSA_number.test(ctx.message.text)){
+//     bot.telegram.sendMessage(ctx.chat.id,'Enter the code sent via SMS to'+ctx.chat.text)
+// }
+// })
+
+
+// bot.action('Stop ride',ctx=>{
+//     ctx.answerCbQuery()  
+//      bot.telegram.sendMessage(ctx.chat.id,'dddd')
+//  })
+
+
+bot.launch()
+//bot.startPolling();
